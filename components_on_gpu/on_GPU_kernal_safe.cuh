@@ -9,8 +9,6 @@
 #include "../components_on_gpu/on_GPU_Macro.h"
 
 #include "../components_on_cpu/util/simulation_results.h"
-#include "cuPrintf.cu"
-#include "cuPrintf.cuh"
 #include "stdio.h"
 
 //Supply Function
