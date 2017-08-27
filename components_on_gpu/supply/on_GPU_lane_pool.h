@@ -39,12 +39,12 @@ public:
 	//for ring data structure
 	int vehicle_counts[kLaneSize];
 	int vehicle_start_index[kLaneSize];
-	//int first_veh_index[kLaneSize];
+	int first_veh_index[kLaneSize];
 
 	int buffered_vehicle_counts[kLaneSize];
 	int buffered_first_veh_index[kLaneSize];
 	int vehicle_passed_to_the_lane_counts[kLaneSize];
-	//int ring_buffer_size[kLaneSize];
+	int ring_buffer_size[kLaneSize];
 
 	//For accumulated length estimation
 	//float speed_history[kTotalTimeSteps][kLaneSize];

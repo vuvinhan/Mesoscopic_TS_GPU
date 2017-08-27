@@ -15,7 +15,7 @@ public:
 
 	//network
 	int vehicle_space[kTotalVehicleSpace];
-	int buffer_vehicle_space[kTotalBufferVehicleSpace];
+	//int buffer_vehicle_space[kTotalBufferVehicleSpace];
 
 };
 
