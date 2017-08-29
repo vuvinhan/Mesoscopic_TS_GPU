@@ -45,7 +45,7 @@ const int kMaxSpeed = 30;
 const int kMinSpeed = 1;
 
 const int kMaxRouteLength = 767;
-const int kGPUToCPUSimulationResultsCopyBufferSize = 100;//100;
+const int kGPUToCPUSimulationResultsCopyBufferSize = 1;//100;
 
 //additional buffer space
 const int kTotalVehicleSpace = 307683;

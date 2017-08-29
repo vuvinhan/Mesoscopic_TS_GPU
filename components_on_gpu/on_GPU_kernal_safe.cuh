@@ -529,10 +529,10 @@ __global__ void SupplySimulationVehiclePassingFirstOptimizeWarp(GPUMemory* gpu_d
   	if (node_index >= node_length)
 	  	return;
 
-	gpu_data->node_pool.processed[node_index] = false;
+	gpu_data->node_status[node_index] = node_index;
 
 	if (gpu_data->node_pool.upstream_seg_start_index[node_index] < 0){
-		gpu_data->node_pool.processed[node_index] = true;
+		gpu_data->node_status[node_index] = -1;
 		return;
 	}
 
@@ -575,14 +575,12 @@ __global__ void SupplySimulationVehiclePassingFirstOptimizeWarp(GPUMemory* gpu_d
 		if(gpu_data->node_pool.cur_veh[node_index] == -1){
 			updateTimeDiffArray(gpu_data, vpool_gpu, lane_index, seg_index);
 			getFirstVehicleID(gpu_data, vpool_gpu, &gpu_data->node_pool.cur_veh[node_index], &gpu_data->node_pool.cur_lane[node_index], gpu_data->node_pool.upstream_start_lane_index[node_index], gpu_data->node_pool.upstream_end_lane_index[node_index]);
-			if(gpu_data->node_pool.cur_veh[node_index]>=0){
-				gpu_data->num_processed_blocks = true;
-			}else{
-				gpu_data->node_pool.processed[node_index]=true;
+			if(gpu_data->node_pool.cur_veh[node_index]<0){
+				gpu_data->node_status[node_index]=-1;
 			}
 		}
 	}else{
-		gpu_data->node_pool.processed[node_index]=true;
+		gpu_data->node_status[node_index]=-1;
 	}
 }
 
@@ -654,13 +652,10 @@ __global__ void SupplySimulationVehiclePassing(GPUMemory* gpu_data, int time_ste
 }
 
 __global__ void SupplySimulationVehiclePassingOptimizeWarp(GPUMemory* gpu_data, int time_step, int node_length, GPUSharedParameter* data_setting_gpu, GPUVehicle *vpool_gpu) {
-	int node_index = blockIdx.x * blockDim.x + threadIdx.x;
-  	if (node_index >= node_length)
+	int node_id = blockIdx.x * blockDim.x + threadIdx.x;
+  	if (node_id >= node_length)
 	  	return;
-
-	if(gpu_data->node_pool.processed[node_index]){
-		return;
-	}
+  	int node_index = gpu_data->node_status[node_id];
 
 	int the_one_veh = gpu_data->node_pool.cur_veh[node_index];
 	int lane_index = gpu_data->node_pool.cur_lane[node_index];
@@ -697,10 +692,8 @@ __global__ void SupplySimulationVehiclePassingOptimizeWarp(GPUMemory* gpu_data, 
 			updateTimeDiffArray(gpu_data, vpool_gpu, lane_index, seg_index);
 			getFirstVehicleID(gpu_data, vpool_gpu, &gpu_data->node_pool.cur_veh[node_index], &gpu_data->node_pool.cur_lane[node_index],
 					gpu_data->node_pool.upstream_start_lane_index[node_index], gpu_data->node_pool.upstream_end_lane_index[node_index]);
-			if(gpu_data->node_pool.cur_veh[node_index]>=0){
-				gpu_data->num_processed_blocks = true;
-			}else{
-				gpu_data->node_pool.processed[node_index]=true;
+			if(gpu_data->node_pool.cur_veh[node_index]<0){
+				gpu_data->node_status[node_id]=-1;
 			}
 		}
 }

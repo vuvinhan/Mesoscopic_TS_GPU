@@ -9,7 +9,7 @@
 #define CPUVEHICLE_H_
 
 #include "../util/shared_cpu_include.h"
-#include "../../components_on_gpu/util/on_gpu_configuration.h"
+#include "..//util/configurations_on_cpu.h"
 
 class Vehicle {
 public:
@@ -44,8 +44,9 @@ bool Vehicle::load_in_all_vehicles(std::vector<Vehicle*>& all_vehicles, const st
 			one_vec->path_id = atoi(temp_elems[3].c_str());
 			one_vec->entry_time = atoi(temp_elems[4].c_str());
 
-			//if(one_vec->entry_time<=kEndTimeSteps && one_vec->entry_time>=kStartTimeSteps)
+			if(one_vec->entry_time<=kEndTimeSteps && one_vec->entry_time>=kStartTimeSteps){
 				all_vehicles.push_back(one_vec);
+			}
 		}
 		myfile.close();
 	} else {
