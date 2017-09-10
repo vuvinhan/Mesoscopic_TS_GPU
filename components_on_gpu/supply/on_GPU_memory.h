@@ -26,7 +26,6 @@ public:
 
 	LaneVehiclePool lane_vehicle_pool;
 	//LaneBufferedVehiclePool lane_buffered_vehicle_pool;
-	int node_status[kNodeSize];
 	bool num_processed_blocks;
 
 	NewLaneVehicles new_vehicles_every_time_step[kTotalTimeSteps];
@@ -34,7 +33,7 @@ public:
 public:
 
 	size_t total_size() {
-		return sizeof(LanePool) + sizeof(NodePool) + sizeof(SegmentPool) + sizeof(LaneVehiclePool) + sizeof(NewLaneVehicles) * kTotalTimeSteps + sizeof(int)*(kNodeSize+1);
+		return sizeof(LanePool) + sizeof(NodePool) + sizeof(SegmentPool) + sizeof(LaneVehiclePool) + sizeof(NewLaneVehicles) * kTotalTimeSteps;
 	}
 };
 
