@@ -18,7 +18,7 @@
 #include "../components_on_gpu/util/shared_gpu_include.h"
 #include "../components_on_gpu/util/on_gpu_configuration.h"
 #include "../components_on_gpu/on_GPU_Macro.h"
-#include <stdlib.h>
+#include <math.h>
 
 using namespace std;
 
@@ -51,6 +51,7 @@ std::string od_pair_paths_file_path = "data_inputs/New_NW_SG/paths.dat";
  * All data in GPU
  */
 GPUMemory* gpu_data;
+GPUMemory* data_local;
 
 GPUSharedParameter* parameter_setting_on_gpu;
 #ifdef ENABLE_CONSTANT_MEMORY
@@ -121,7 +122,9 @@ bool InitilizeGPU();
 bool InitGPUParameterSetting(GPUSharedParameter* data_setting_gpu);
 bool InitGPUData(GPUMemory* data_local);
 bool StartSimulation();
+bool StartSimulationOptimizeWarp();
 bool StartSimulationVP();
+bool StartSimulationSynch();
 bool DestroyResources();
 
 /*
@@ -170,7 +173,12 @@ int main(int argc, char* argv[]) {
 		return 0;
 	}
 	cout << "Finished initializing GPU"<<endl;
+	//create streams
+	//cudaStreamCreate(&stream_gpu_supply);
+	//cudaStreamCreate(&stream_gpu_io);
 
+	//create a event
+	//cudaEventCreate(&gpu_supply_one_tick_simulation_done_trigger_event);
 
 	std::cout << "Simulation Starts" << std::endl;
 
@@ -178,7 +186,7 @@ int main(int argc, char* argv[]) {
 	//profile.start_profiling();
 
 	//Start Simulation (ETSF implemented inside)
-	if (StartSimulationVP() == false) {
+	if (StartSimulationOptimizeWarp() == false) {
 		cout << "Simulation Fails" << endl;
 		DestroyResources();
 		return 0;
@@ -255,7 +263,7 @@ bool InitilizeGPU() {
 	gpu_data = NULL;
 	parameter_setting_on_gpu = NULL;
 
-	GPUMemory* data_local = new GPUMemory();
+	data_local = new GPUMemory();
 	InitGPUData(data_local);
 
 	GPUSharedParameter* data_setting_gpu = new GPUSharedParameter();
@@ -378,10 +386,12 @@ bool InitGPUData(GPUMemory* data_local) {
 		data_local->lane_pool.leaving_vehicle_counts[i] = 0;
 
 		data_local->lane_pool.vehicle_start_index[i] = one_lane->veh_start_index;
-		data_local->lane_pool.buffered_first_veh_index[i] = one_lane->veh_start_index + one_lane->max_vehs;
+		//data_local->lane_pool.first_veh_index[i] = 0;
+
+		data_local->lane_pool.buffered_first_veh_index[i] = 0;
 		data_local->lane_pool.buffered_vehicle_counts[i] = 0;
 
-		//data_local->lane_pool.ring_buffer_size[i] = one_lane->max_vehs + kMaxSegmentInputCapacityPerTimeStep;
+		data_local->lane_pool.ring_buffer_size[i] = one_lane->max_vehs + kMaxSegmentInputCapacityPerTimeStep;
 
 		data_local->lane_pool.queue_length[i] = 0;
 	}
@@ -468,7 +478,6 @@ bool InitGPUData(GPUMemory* data_local) {
 			data_local->new_vehicles_every_time_step[i-kStartTimeSteps].seg_ID[j] = -1;
 		}
 	}
-	std::cout << "all_vehicles.size():" << all_vehicles.size() * sizeof(GPUVehicle)<< std::endl;
 
 //init host vehicle pool data /*xiaosong*/
 	int memory_space_for_vehicles = all_vehicles.size() * sizeof(GPUVehicle);
@@ -535,6 +544,7 @@ bool InitGPUData(GPUMemory* data_local) {
 	}
 
 	std::cout << "init all_vehicles:" << total_inserted_vehicles << std::endl;
+	std::cout << "vpool.size():" << total_inserted_vehicles * sizeof(GPUVehicle)<< std::endl;
 	std::cout << "total global mem: "<< data_local->total_size()<<std::endl;
 
 	return true;
@@ -629,6 +639,95 @@ bool StartSimulation() {
 	return true;
 }
 
+bool StartSimulationOptimizeWarp() {
+	TimeTools profile;
+
+	int num_unprocessed_nodes;
+	int updated_count;
+
+	while (to_simulate_time < 1800) {
+		//std::cout<<to_simulate_time<<"\n";
+
+		SupplySimulationPreVehiclePassing<<<segment_blocks, segment_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, kSegmentSize, parameter_setting_on_gpu, vpool_gpu);
+
+		num_unprocessed_nodes = kNodeSize;
+
+		SupplySimulationVehiclePassingFirstOptimizeWarp<<<node_blocks, node_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, kNodeSize, parameter_setting_on_gpu, vpool_gpu);
+		cudaMemcpy(data_local->node_status, gpu_data->node_status, sizeof(int)*num_unprocessed_nodes, cudaMemcpyDeviceToHost);
+		updated_count = 0;
+		for(int i=0; i<num_unprocessed_nodes; i++){
+						if(data_local->node_status[i]>=0){
+							data_local->node_status[updated_count] = data_local->node_status[i];
+							updated_count++;
+						}
+					}
+					num_unprocessed_nodes = updated_count;
+					//std::cout<<"After: "<<num_unprocessed_nodes<<"\n";
+
+		cudaMemcpy(gpu_data->node_status, data_local->node_status, sizeof(int)*num_unprocessed_nodes, cudaMemcpyDeviceToHost);
+		//int n = 1;
+		while(num_unprocessed_nodes>0){
+			//num_processed_nodes = false;
+			cudaMemcpy(gpu_data->node_status, data_local->node_status, sizeof(int)*num_unprocessed_nodes, cudaMemcpyDeviceToHost);
+			SupplySimulationVehiclePassingOptimizeWarp<<<ceil(num_unprocessed_nodes/node_threads_in_a_block), node_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, num_unprocessed_nodes, parameter_setting_on_gpu, vpool_gpu);
+			cudaMemcpy(data_local->node_status, gpu_data->node_status, sizeof(int)*num_unprocessed_nodes, cudaMemcpyDeviceToHost);
+			//rearrange status array
+			updated_count = 0;
+			for(int i=0; i<num_unprocessed_nodes; i++){
+				if(data_local->node_status[i]>=0){
+					data_local->node_status[updated_count] = data_local->node_status[i];
+					updated_count++;
+				}
+			}
+			num_unprocessed_nodes = updated_count;
+			//std::cout<<to_simulate_time<<" "<<num_unprocessed_nodes<<'\n';
+		}
+		to_simulate_time += simulation_time_step;
+	}
+
+	profile.start_profiling();
+
+	while (to_simulate_time < simulation_end_time) {
+
+		SupplySimulationPreVehiclePassing<<<segment_blocks, segment_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, kSegmentSize, parameter_setting_on_gpu, vpool_gpu);
+
+		num_unprocessed_nodes = kNodeSize;
+
+		SupplySimulationVehiclePassingFirstOptimizeWarp<<<node_blocks, node_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, kNodeSize, parameter_setting_on_gpu, vpool_gpu);
+		cudaMemcpy(data_local->node_status, gpu_data->node_status, sizeof(int)*num_unprocessed_nodes, cudaMemcpyDeviceToHost);
+		updated_count = 0;
+					for(int i=0; i<num_unprocessed_nodes; i++){
+						if(data_local->node_status[i]>=0){
+							data_local->node_status[updated_count] = data_local->node_status[i];
+							updated_count++;
+						}
+					}
+					num_unprocessed_nodes = updated_count;
+
+		cudaMemcpy(gpu_data->node_status, data_local->node_status, sizeof(int)*num_unprocessed_nodes, cudaMemcpyDeviceToHost);
+		//int n = 1;
+		while(num_unprocessed_nodes>0){
+			//num_processed_nodes = false;
+			cudaMemcpy(gpu_data->node_status, data_local->node_status, sizeof(int)*num_unprocessed_nodes, cudaMemcpyDeviceToHost);
+			SupplySimulationVehiclePassingOptimizeWarp<<<ceil(num_unprocessed_nodes/node_threads_in_a_block), node_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, num_unprocessed_nodes, parameter_setting_on_gpu, vpool_gpu);
+			cudaMemcpy(data_local->node_status, gpu_data->node_status, sizeof(int)*num_unprocessed_nodes, cudaMemcpyDeviceToHost);
+			//rearrange status array
+			updated_count = 0;
+			for(int i=0; i<num_unprocessed_nodes; i++){
+				if(data_local->node_status[i]>=0){
+					data_local->node_status[updated_count] = data_local->node_status[i];
+					updated_count++;
+				}
+			}
+			num_unprocessed_nodes = updated_count;
+		}
+		to_simulate_time += simulation_time_step;
+	}
+	profile.end_profiling();
+	profile.output();
+	return true;
+}
+
 bool StartSimulationVP() {
 	TimeTools profile;
 	//profile.start_profiling();
@@ -658,6 +757,37 @@ bool StartSimulationVP() {
 	profile.output();
 	return true;
 }
+
+bool StartSimulationSynch() {
+	TimeTools profile;
+	//profile.start_profiling();
+
+	while (to_simulate_time < 1800) {
+
+		SupplySimulationPreVehiclePassing<<<segment_blocks, segment_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, kSegmentSize, parameter_setting_on_gpu, vpool_gpu);
+
+		SupplySimulationVehiclePassingSynch<<<node_blocks, node_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, kNodeSize, parameter_setting_on_gpu, vpool_gpu);
+
+		to_simulate_time += simulation_time_step;
+	}
+	//profile.end_profiling();
+	//profile.output();
+
+	profile.start_profiling();
+
+	while (to_simulate_time < simulation_end_time) {
+
+		SupplySimulationPreVehiclePassing<<<segment_blocks, segment_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, kSegmentSize, parameter_setting_on_gpu, vpool_gpu);
+
+		SupplySimulationVehiclePassingSynch<<<node_blocks, node_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, kNodeSize, parameter_setting_on_gpu, vpool_gpu);
+
+		to_simulate_time += simulation_time_step;
+	}
+	profile.end_profiling();
+	profile.output();
+	return true;
+}
+
 
 /**
  * Minor Functions
