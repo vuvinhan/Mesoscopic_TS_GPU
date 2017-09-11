@@ -653,25 +653,11 @@ bool StartSimulationOptimizeWarp() {
 		num_unprocessed_nodes = kNodeSize;
 
 		SupplySimulationVehiclePassingFirstOptimizeWarp<<<node_blocks, node_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, kNodeSize, parameter_setting_on_gpu, vpool_gpu);
-		cudaMemcpy(data_local->node_status, gpu_data->node_status, sizeof(int)*num_unprocessed_nodes, cudaMemcpyDeviceToHost);
-		updated_count = 0;
-		for(int i=0; i<num_unprocessed_nodes; i++){
-						if(data_local->node_status[i]>=0){
-							data_local->node_status[updated_count] = data_local->node_status[i];
-							updated_count++;
-						}
-					}
-					num_unprocessed_nodes = updated_count;
-					//std::cout<<"After: "<<num_unprocessed_nodes<<"\n";
+		cudaMemcpy(data_local->node_status, gpu_data->node_status, sizeof(int)*(num_unprocessed_nodes+1), cudaMemcpyDeviceToHost);
 
-		cudaMemcpy(gpu_data->node_status, data_local->node_status, sizeof(int)*num_unprocessed_nodes, cudaMemcpyDeviceToHost);
-		//int n = 1;
-		while(num_unprocessed_nodes>0){
-			//num_processed_nodes = false;
-			cudaMemcpy(gpu_data->node_status, data_local->node_status, sizeof(int)*num_unprocessed_nodes, cudaMemcpyDeviceToHost);
-			SupplySimulationVehiclePassingOptimizeWarp<<<ceil(num_unprocessed_nodes/node_threads_in_a_block), node_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, num_unprocessed_nodes, parameter_setting_on_gpu, vpool_gpu);
-			cudaMemcpy(data_local->node_status, gpu_data->node_status, sizeof(int)*num_unprocessed_nodes, cudaMemcpyDeviceToHost);
-			//rearrange status array
+		//std::cout<<"After: "<<num_unprocessed_nodes<<"\n";
+
+		while(data_local->node_status[num_unprocessed_nodes]>0){
 			updated_count = 0;
 			for(int i=0; i<num_unprocessed_nodes; i++){
 				if(data_local->node_status[i]>=0){
@@ -680,7 +666,20 @@ bool StartSimulationOptimizeWarp() {
 				}
 			}
 			num_unprocessed_nodes = updated_count;
+			data_local->node_status[num_unprocessed_nodes]=0;
+
+			cudaMemcpy(gpu_data->node_status, data_local->node_status, sizeof(int)*(num_unprocessed_nodes+1), cudaMemcpyHostToDevice);
+
+			SupplySimulationVehiclePassingOptimizeWarp<<<ceil(num_unprocessed_nodes/node_threads_in_a_block), node_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, num_unprocessed_nodes, parameter_setting_on_gpu, vpool_gpu);
+
+			cudaMemcpy(data_local->node_status, gpu_data->node_status, sizeof(int)*(num_unprocessed_nodes+1), cudaMemcpyDeviceToHost);
+
 			//std::cout<<to_simulate_time<<" "<<num_unprocessed_nodes<<'\n';
+//			std::cout<<to_simulate_time<<" ";
+//			for(int i=0; i<num_unprocessed_nodes; i++){
+//				std::cout<<data_local->node_status[i]<<" ";
+//			}
+//			std::cout<<"\n";
 		}
 		to_simulate_time += simulation_time_step;
 	}
@@ -694,24 +693,12 @@ bool StartSimulationOptimizeWarp() {
 		num_unprocessed_nodes = kNodeSize;
 
 		SupplySimulationVehiclePassingFirstOptimizeWarp<<<node_blocks, node_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, kNodeSize, parameter_setting_on_gpu, vpool_gpu);
-		cudaMemcpy(data_local->node_status, gpu_data->node_status, sizeof(int)*num_unprocessed_nodes, cudaMemcpyDeviceToHost);
-		updated_count = 0;
-					for(int i=0; i<num_unprocessed_nodes; i++){
-						if(data_local->node_status[i]>=0){
-							data_local->node_status[updated_count] = data_local->node_status[i];
-							updated_count++;
-						}
-					}
-					num_unprocessed_nodes = updated_count;
 
-		cudaMemcpy(gpu_data->node_status, data_local->node_status, sizeof(int)*num_unprocessed_nodes, cudaMemcpyDeviceToHost);
-		//int n = 1;
-		while(num_unprocessed_nodes>0){
-			//num_processed_nodes = false;
-			cudaMemcpy(gpu_data->node_status, data_local->node_status, sizeof(int)*num_unprocessed_nodes, cudaMemcpyDeviceToHost);
-			SupplySimulationVehiclePassingOptimizeWarp<<<ceil(num_unprocessed_nodes/node_threads_in_a_block), node_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, num_unprocessed_nodes, parameter_setting_on_gpu, vpool_gpu);
-			cudaMemcpy(data_local->node_status, gpu_data->node_status, sizeof(int)*num_unprocessed_nodes, cudaMemcpyDeviceToHost);
-			//rearrange status array
+		cudaMemcpy(data_local->node_status, gpu_data->node_status, sizeof(int)*(num_unprocessed_nodes+1), cudaMemcpyDeviceToHost);
+
+		//std::cout<<"After: "<<num_unprocessed_nodes<<"\n";
+
+		while(data_local->node_status[num_unprocessed_nodes]>0){
 			updated_count = 0;
 			for(int i=0; i<num_unprocessed_nodes; i++){
 				if(data_local->node_status[i]>=0){
@@ -720,6 +707,20 @@ bool StartSimulationOptimizeWarp() {
 				}
 			}
 			num_unprocessed_nodes = updated_count;
+			data_local->node_status[num_unprocessed_nodes]=0;
+
+			cudaMemcpy(gpu_data->node_status, data_local->node_status, sizeof(int)*(num_unprocessed_nodes+1), cudaMemcpyHostToDevice);
+
+			SupplySimulationVehiclePassingOptimizeWarp<<<ceil(num_unprocessed_nodes/node_threads_in_a_block), node_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, num_unprocessed_nodes, parameter_setting_on_gpu, vpool_gpu);
+
+			cudaMemcpy(data_local->node_status, gpu_data->node_status, sizeof(int)*(num_unprocessed_nodes+1), cudaMemcpyDeviceToHost);
+
+			//std::cout<<to_simulate_time<<" "<<num_unprocessed_nodes<<'\n';
+//			std::cout<<to_simulate_time<<" ";
+//			for(int i=0; i<num_unprocessed_nodes; i++){
+//				std::cout<<data_local->node_status[i]<<" ";
+//			}
+//			std::cout<<"\n";
 		}
 		to_simulate_time += simulation_time_step;
 	}

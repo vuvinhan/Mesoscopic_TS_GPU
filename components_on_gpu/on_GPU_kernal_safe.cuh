@@ -50,6 +50,7 @@ __global__ void SupplySimulationPreVehiclePassing(GPUMemory* gpu_data, int time_
 
  	int seg_veh_cnt = 0;
  	int RB_size = gpu_data->lane_pool.ring_buffer_size[gpu_data->seg_pool.lane_start_index[seg_index]];
+ 	gpu_data->seg_pool.input_capacity[seg_index] = gpu_data->seg_pool.capacity[seg_index];
 
  	//update segment vehicle counts and input capacity after advance phase
  	if(time_step>0){
@@ -87,7 +88,6 @@ __global__ void SupplySimulationPreVehiclePassing(GPUMemory* gpu_data, int time_
  		}
  	}
  	float seg_length = gpu_data->seg_pool.seg_length[seg_index];
- 	//gpu_data->seg_pool.input_capacity[seg_index] = gpu_data->seg_pool.capacity[seg_index];
 
  	//load newly generated vehicles to the back of the segment
  	int max_veh = gpu_data->seg_pool.max_vehicles[seg_index];
@@ -559,10 +559,10 @@ __global__ void SupplySimulationVehiclePassingFirstOptimizeWarp(GPUMemory* gpu_d
 			if (gpu_data->seg_pool.input_capacity[next_seg]>0 &&
 					(gpu_data->node_pool.vnode[node_index]
 		             || (gpu_data->seg_pool.processed[next_seg]<=0 && gpu_data->seg_pool.empty_space[next_seg]>0)
-					 || (gpu_data->seg_pool.processed[next_seg]>0 && atomicDecrease(&gpu_data->seg_pool.empty_space[next_seg])))) //start if next segment has input capacity
+					 || (gpu_data->seg_pool.processed[next_seg]>0 && atomicDecrease(&gpu_data->seg_pool.empty_space[next_seg])>0))) //start if next segment has input capacity
 			{
 				updateAfterVehicleMovingToNextSeg(gpu_data, vpool_gpu, data_setting_gpu, time_step, the_one_veh, lane_index, seg_index, next_seg);
-			}else if(gpu_data->seg_pool.input_capacity[next_seg]>0 && gpu_data->seg_pool.processed[next_seg]>0 && !atomicDecrease(&gpu_data->seg_pool.empty_space[next_seg]))
+			}else if(gpu_data->seg_pool.input_capacity[next_seg]>0 && gpu_data->seg_pool.processed[next_seg]>0 && atomicDecrease(&gpu_data->seg_pool.empty_space[next_seg])<=0)
 			{
 				gpu_data->node_pool.cur_veh[node_index] = the_one_veh;
 			}
@@ -578,6 +578,8 @@ __global__ void SupplySimulationVehiclePassingFirstOptimizeWarp(GPUMemory* gpu_d
 			getFirstVehicleID(gpu_data, vpool_gpu, &gpu_data->node_pool.cur_veh[node_index], &gpu_data->node_pool.cur_lane[node_index], gpu_data->node_pool.upstream_start_lane_index[node_index], gpu_data->node_pool.upstream_end_lane_index[node_index]);
 			if(gpu_data->node_pool.cur_veh[node_index]<0){
 				gpu_data->node_status[node_index]=-1;
+			}else{
+				gpu_data->node_status[node_length] = 1;
 			}
 		}
 	}else{
@@ -679,7 +681,7 @@ __global__ void SupplySimulationVehiclePassingOptimizeWarp(GPUMemory* gpu_data, 
 			{
 				updateAfterVehicleMovingToNextSeg(gpu_data, vpool_gpu, data_setting_gpu, time_step, the_one_veh, lane_index, seg_index, next_seg);
 			}
-			else if((gpu_data->seg_pool.input_capacity[next_seg]>0) && gpu_data->seg_pool.processed[next_seg]>0 && !atomicDecrease(&gpu_data->seg_pool.empty_space[next_seg])){
+			else if((gpu_data->seg_pool.input_capacity[next_seg]>0) && gpu_data->seg_pool.processed[next_seg]>0 && atomicDecrease(&gpu_data->seg_pool.empty_space[next_seg])<=0){
 				gpu_data->node_pool.cur_veh[node_index] = the_one_veh;
 			}
 			else{
@@ -695,6 +697,8 @@ __global__ void SupplySimulationVehiclePassingOptimizeWarp(GPUMemory* gpu_data, 
 					gpu_data->node_pool.upstream_start_lane_index[node_index], gpu_data->node_pool.upstream_end_lane_index[node_index]);
 			if(gpu_data->node_pool.cur_veh[node_index]<0){
 				gpu_data->node_status[node_id]=-1;
+			}else{
+				gpu_data->node_status[node_length] = 1;
 			}
 		}
 }
