@@ -18,6 +18,7 @@
 __global__ void initPathCost(GPUMemory* gpu_data, int num_paths);
 __global__ void markPaths(GPUMemory* gpu_data, GPUVehicle *vpool_gpu, int num_vehicles, int start_time, GPUSharedParameter* data_setting_gpu);
 __global__ void computePathCosts(GPUMemory* gpu_data, int num_paths, GPUSharedParameter* data_setting_gpu);
+__global__ void markPathsFirst(GPUMemory* gpu_data, GPUVehicle *vpool_gpu, int num_vehicles, int start_time, GPUSharedParameter* data_setting_gpu, curandState *state);
 __global__ void pathSelection(GPUMemory* gpu_data, GPUVehicle *vpool_gpu, int num_vehicles, int start_time, GPUSharedParameter* data_setting_gpu, curandState *state);
 
 __device__ bool atomicIncrease(int* address, int* index, int limit);
@@ -31,6 +32,25 @@ __global__ void initPathCost(GPUMemory* gpu_data, int num_paths){
 		return;
 	gpu_data->current_paths[path_index] = -1;
 }
+__global__ void markPathsFirst(GPUMemory* gpu_data, GPUVehicle *vpool_gpu, int num_vehicles, int start_time, GPUSharedParameter* data_setting_gpu, curandState *state) {
+
+ 	int veh_index = blockIdx.x * blockDim.x + threadIdx.x;
+ 	if (veh_index >= num_vehicles)
+ 		return;
+
+ 	int od_id = vpool_gpu[gpu_data->cur_interval_new_vehicles[veh_index]].od_id;
+ 	int path_start_index = gpu_data->od_path_mapping.path_start_index[od_id];
+ 	int path_end_index = path_start_index + gpu_data->od_path_mapping.num_paths[od_id]-1;
+ 	int entry_time = vpool_gpu[gpu_data->cur_interval_new_vehicles[veh_index]].entry_time;
+ 	int time_step = entry_time - start_time;
+ 	for(int pathId=path_start_index; pathId<=path_end_index; pathId++){
+ 		gpu_data->current_paths[time_step*data_setting_gpu->kOnGPUNumPaths+pathId] = pathId;
+ 		gpu_data->current_paths_time[time_step*data_setting_gpu->kOnGPUNumPaths+pathId] = entry_time;
+ 	}
+
+ 	curand_init (1234 , veh_index , 0 , &state[veh_index]);
+ }
+
 __global__ void markPaths(GPUMemory* gpu_data, GPUVehicle *vpool_gpu, int num_vehicles, int start_time, GPUSharedParameter* data_setting_gpu) {
 
  	int veh_index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -47,6 +67,7 @@ __global__ void markPaths(GPUMemory* gpu_data, GPUVehicle *vpool_gpu, int num_ve
  		gpu_data->current_paths_time[time_step*data_setting_gpu->kOnGPUNumPaths+pathId] = entry_time;
  	}
  }
+
 __global__ void computePathCosts(GPUMemory* gpu_data, int num_paths, GPUSharedParameter* data_setting_gpu){
 	int path_index_in_array = blockIdx.x * blockDim.x + threadIdx.x;
 	if(path_index_in_array >= num_paths)
@@ -103,7 +124,6 @@ __global__ void pathSelection(GPUMemory* gpu_data, GPUVehicle *vpool_gpu, int nu
 	}
 
 	//select path based on the path utility
-	curand_init (1234 , veh_index , 0 , &state[veh_index]);
 	float random = curand_uniform(&state[veh_index]);
 	float upperProb = 0;
 	float currentProb;

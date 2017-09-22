@@ -688,6 +688,8 @@ bool StartDemandSimulation() {
 	//=========================================DEMAND======================================================//
 	int numPathsPerTTInterval = kNumPaths*kTTInterval/kUnitTimeStep;
 	thrust::device_ptr<int> current_paths_start_ptr(gpu_data->current_paths);
+	curandState* devStates;
+	cudaMalloc ( &devStates, kMaxNumVehPerInterval*sizeof( curandState ) );
 
 	while(to_simulate_time < 30){
 		std::cout<<to_simulate_time<<"\n";
@@ -701,7 +703,12 @@ bool StartDemandSimulation() {
 		thrust::fill(current_paths_start_ptr, current_paths_start_ptr+numPathsPerTTInterval, -1);
 
 		//Mark paths for path cost computation
-		markPaths<<<ceil(cur_interval_num_vehicles/vehicle_threads_in_a_block), vehicle_threads_in_a_block, 0>>>(gpu_data, vpool_gpu, cur_interval_num_vehicles, to_simulate_time*kTTInterval, parameter_setting_on_gpu);
+		if(to_simulate_time==0)
+			markPathsFirst<<<ceil(cur_interval_num_vehicles/vehicle_threads_in_a_block), vehicle_threads_in_a_block, 0>>>
+				(gpu_data, vpool_gpu, cur_interval_num_vehicles, to_simulate_time*kTTInterval, parameter_setting_on_gpu, devStates);
+		else
+			markPaths<<<ceil(cur_interval_num_vehicles/vehicle_threads_in_a_block), vehicle_threads_in_a_block, 0>>>
+				(gpu_data, vpool_gpu, cur_interval_num_vehicles, to_simulate_time*kTTInterval, parameter_setting_on_gpu);
 
 		//compact current_paths array
 		thrust::device_ptr<int> new_end = thrust::remove(current_paths_start_ptr, current_paths_start_ptr + numPathsPerTTInterval, -1);
@@ -717,9 +724,6 @@ bool StartDemandSimulation() {
 		//compute path cost
 		computePathCosts<<<ceil((new_end-current_paths_start_ptr)/path_threads_in_a_block), path_threads_in_a_block, 0>>>(gpu_data, new_end-current_paths_start_ptr, parameter_setting_on_gpu);
 
-		curandState* devStates;
-		cudaMalloc ( &devStates, cur_interval_num_vehicles*sizeof( curandState ) );
-
 		pathSelection<<<ceil(cur_interval_num_vehicles/vehicle_threads_in_a_block), vehicle_threads_in_a_block, 0>>>(gpu_data, vpool_gpu, cur_interval_num_vehicles, to_simulate_time*kTTInterval, parameter_setting_on_gpu, devStates);
 
 		to_simulate_time++;
@@ -730,7 +734,9 @@ bool StartDemandSimulation() {
 	while (to_simulate_time < simulation_end_time/kTTInterval) {
 		//Create in GPU a list of new vehicles departing this interval
 		int cur_interval_num_vehicles = new_interval_vehicles[to_simulate_time]->new_vehicle_size;
+
 		cudaMemcpy(gpu_data->cur_interval_new_vehicles, new_interval_vehicles[to_simulate_time]->veh_ids, sizeof(int)*cur_interval_num_vehicles, cudaMemcpyHostToDevice);
+
 
 		//init current paths array to -1
 		thrust::fill(current_paths_start_ptr, current_paths_start_ptr+numPathsPerTTInterval, -1);
@@ -743,9 +749,6 @@ bool StartDemandSimulation() {
 
 		//compute path cost
 		computePathCosts<<<ceil((new_end-current_paths_start_ptr)/path_threads_in_a_block), path_threads_in_a_block, 0>>>(gpu_data, new_end-current_paths_start_ptr, parameter_setting_on_gpu);
-
-		curandState* devStates;
-		cudaMalloc ( &devStates, cur_interval_num_vehicles*sizeof( curandState ) );
 
 		pathSelection<<<ceil(cur_interval_num_vehicles/vehicle_threads_in_a_block), vehicle_threads_in_a_block, 0>>>(gpu_data, vpool_gpu, cur_interval_num_vehicles, to_simulate_time*kTTInterval, parameter_setting_on_gpu, devStates);
 
