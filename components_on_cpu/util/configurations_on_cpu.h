@@ -16,6 +16,7 @@
 const int kLaneSize = 9437;
 const int kSegmentSize = 3386;
 const int kNodeSize = 3186;
+const int kLinkSize = 1049;
 
 const int kStartTimeSteps = 23400;
 const int kEndTimeSteps = 28800;
@@ -50,5 +51,17 @@ const int kGPUToCPUSimulationResultsCopyBufferSize = 1;//100;
 //additional buffer space
 const int kTotalVehicleSpace = 307683;
 const int kTotalBufferVehicleSpace = 47185;
+
+const int kNumPaths = 14476;
+const int kNumTTInfo = 360;
+const int kTTInterval = 60;
+const int kNumOD = 4165;
+const int kMaxRouteLengthLink = 144;
+const float kFreeFlowSpeed = 42.4688; //m/s
+const int kMaxNumVehPerInterval = 1312; //re-computer for different demand
+
+float kMaxUtil = log(3.40282347e+38);
+float kMaxFloat = 3.40282347e+38;
+float kBetaT = -0.0108879;
 
 #endif /* SHARED_GPU_DATA_H_ */

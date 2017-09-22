@@ -434,7 +434,9 @@ __global__ void SupplySimulationVehiclePassingVNode(GPUMemory* gpu_data, int tim
 			updateAfterVehicleFinishingTripVP(gpu_data, data_setting_gpu, lane_index, seg_index);
 		}
 		else{
-			int next_seg = vpool_gpu[the_one_veh].path_code[vpool_gpu[the_one_veh].next_path_index];
+			//int next_seg = vpool_gpu[the_one_veh].path_code[vpool_gpu[the_one_veh].next_path_index];
+			int next_seg = gpu_data->path_links_segs[vpool_gpu[the_one_veh].path_code].path_segs[vpool_gpu[the_one_veh].next_path_index];
+
 			if (gpu_data->seg_pool.input_capacity[next_seg]>0) //start if next segment has input capacity
 			{
 				updateAfterVehicleMovingToBufferVP(gpu_data, vpool_gpu, data_setting_gpu, time_step, the_one_veh, lane_index, seg_index, next_seg);
@@ -482,7 +484,8 @@ __global__ void SupplySimulationVehiclePassingFirst(GPUMemory* gpu_data, int tim
 			updateAfterVehicleFinishingTrip(gpu_data, data_setting_gpu, lane_index, seg_index);
 		}else{
 			//next segment
-			int next_seg = vpool_gpu[the_one_veh].path_code[vpool_gpu[the_one_veh].next_path_index];
+			//int next_seg = vpool_gpu[the_one_veh].path_code[vpool_gpu[the_one_veh].next_path_index];
+			int next_seg = gpu_data->path_links_segs[vpool_gpu[the_one_veh].path_code].path_segs[vpool_gpu[the_one_veh].next_path_index];
 
 			if (gpu_data->seg_pool.input_capacity[next_seg]>0) //start if next segment has input capacity
 			{
@@ -554,7 +557,8 @@ __global__ void SupplySimulationVehiclePassingFirstOptimizeWarp(GPUMemory* gpu_d
 			updateAfterVehicleFinishingTrip(gpu_data, data_setting_gpu, lane_index, seg_index);
 		}else{
 			//next segment
-			int next_seg = vpool_gpu[the_one_veh].path_code[vpool_gpu[the_one_veh].next_path_index];
+			//int next_seg = vpool_gpu[the_one_veh].path_code[vpool_gpu[the_one_veh].next_path_index];
+			int next_seg = gpu_data->path_links_segs[vpool_gpu[the_one_veh].path_code].path_segs[vpool_gpu[the_one_veh].next_path_index];
 
 			if (gpu_data->seg_pool.input_capacity[next_seg]>0 &&
 					(gpu_data->node_pool.vnode[node_index]
@@ -610,7 +614,8 @@ __global__ void SupplySimulationVehiclePassing(GPUMemory* gpu_data, int time_ste
 			updateAfterVehicleFinishingTrip(gpu_data, data_setting_gpu, lane_index, seg_index);
 		}else{
 			//next segment
-			int next_seg = vpool_gpu[the_one_veh].path_code[vpool_gpu[the_one_veh].next_path_index];
+			//int next_seg = vpool_gpu[the_one_veh].path_code[vpool_gpu[the_one_veh].next_path_index];
+			int next_seg = gpu_data->path_links_segs[vpool_gpu[the_one_veh].path_code].path_segs[vpool_gpu[the_one_veh].next_path_index];
 
 			if (gpu_data->seg_pool.input_capacity[next_seg]>0) //start if next segment has input capacity
 			{
@@ -672,7 +677,8 @@ __global__ void SupplySimulationVehiclePassingOptimizeWarp(GPUMemory* gpu_data, 
 			updateAfterVehicleFinishingTrip(gpu_data, data_setting_gpu, lane_index, seg_index);
 		}else{
 			//next segment
-			int next_seg = vpool_gpu[the_one_veh].path_code[vpool_gpu[the_one_veh].next_path_index];
+			//int next_seg = vpool_gpu[the_one_veh].path_code[vpool_gpu[the_one_veh].next_path_index];
+			int next_seg = gpu_data->path_links_segs[vpool_gpu[the_one_veh].path_code].path_segs[vpool_gpu[the_one_veh].next_path_index];
 
 			if ((gpu_data->seg_pool.input_capacity[next_seg]>0) &&
 					(gpu_data->node_pool.vnode[node_index]
@@ -732,7 +738,8 @@ __global__ void SupplySimulationVehiclePassingSynch(GPUMemory* gpu_data, int tim
 			updateAfterVehicleFinishingTrip(gpu_data, data_setting_gpu, lane_index, seg_index);
 		}else{
 			//next segment
-			int next_seg = vpool_gpu[the_one_veh].path_code[vpool_gpu[the_one_veh].next_path_index];
+			//int next_seg = vpool_gpu[the_one_veh].path_code[vpool_gpu[the_one_veh].next_path_index];
+			int next_seg = gpu_data->path_links_segs[vpool_gpu[the_one_veh].path_code].path_segs[vpool_gpu[the_one_veh].next_path_index];
 
 			if (gpu_data->seg_pool.input_capacity[next_seg]>0) //start if next segment has input capacity
 			{

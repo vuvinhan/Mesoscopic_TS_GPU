@@ -33,6 +33,15 @@ public:
 	//additional buffer space
 	int kOnGPUTotalVehicleSpace;
 
+	int kOnGPUTTInterval;
+	int kOnGPUNumTTInfo;
+	int kOnGPUNumPaths;
+
+	float kOnGPUMaxUtil;
+	float kOnGPUMaxFloat;
+
+	float betaT;
+
 };
 
 #endif /* ONGPUCONFIGURATION_H_ */

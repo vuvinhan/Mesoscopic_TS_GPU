@@ -4,14 +4,17 @@
  */
 
 #include "../components_on_cpu/network/network.h"
-#include "../components_on_cpu/demand/od_pair.h"
-#include "../components_on_cpu/demand/od_path.h"
+#include "../components_on_cpu/network/linkTravelTimes.h"
+#include "../components_on_cpu/demand/od_mapping.h"
+#include "../components_on_cpu/demand/od_path_mapping.h"
 #include "../components_on_cpu/demand/vehicle.h"
+#include "../components_on_cpu/demand/new_vehicles_per_interval.h"
 #include "../components_on_cpu/util/time_tools.h"
 #include "../components_on_cpu/util/string_tools.h"
 #include "../components_on_cpu/util/simulation_results.h"
 #include "../components_on_cpu/util/shared_cpu_include.h"
 #include "../components_on_gpu/on_GPU_kernal_safe.cuh"
+#include "../components_on_gpu/on_GPU_kernel_demand.cuh"
 #include "../components_on_gpu/supply/on_GPU_memory.h"
 #include "../components_on_gpu/supply/on_GPU_vehicle.h"
 #include "../components_on_gpu/supply/on_GPU_new_lane_vehicles.h"
@@ -19,6 +22,14 @@
 #include "../components_on_gpu/util/on_gpu_configuration.h"
 #include "../components_on_gpu/on_GPU_Macro.h"
 #include <math.h>
+#include "../components_on_cpu/demand/path.h"
+#include <thrust/host_vector.h>
+#include <thrust/device_vector.h>
+ #include <thrust/device_ptr.h>
+#include <thrust/remove.h>
+#include <thrust/fill.h>
+#include <thrust/execution_policy.h>
+#include <curand_kernel.h>
 
 using namespace std;
 
@@ -32,13 +43,23 @@ const int node_threads_in_a_block = 128;
 int segment_blocks;
 const int segment_threads_in_a_block = 128;
 
+const int vehicle_threads_in_a_block = 128;
+
+const int path_threads_in_a_block = 128;
+
 /*
  * Demand
  */
 Network* the_network;
-std::vector<ODPair*> all_od_pairs;
-std::vector<ODPairPATH*> all_od_paths;
+std::vector<Path*> all_paths;
 std::vector<Vehicle*> all_vehicles;
+std::vector<ODPathMapping*> od_path_map;
+ODMapping* all_od_pairs[kNumOD];
+NewVehiclesPerInterval* new_interval_vehicles[kTotalTimeSteps/kTTInterval];
+/*
+ * Travel Time Table
+ */
+LinkTravelTimes* the_tt_table[kLinkSize];
 
 /*
  * Path Input Config
@@ -46,6 +67,8 @@ std::vector<Vehicle*> all_vehicles;
 std::string network_file_path = "data_inputs/New_NW_SG/NewNetWork2.dat";
 std::string demand_file_path = "data_inputs/New_NW_SG/newDemand.dat";
 std::string od_pair_paths_file_path = "data_inputs/New_NW_SG/paths.dat";
+std::string path_link_file_path = "data_inputs/New_NW_SG/path_link.dat";
+std::string tt_file_path = "data_inputs/New_NW_SG/tt.dat";
 
 /*
  * All data in GPU
@@ -59,8 +82,8 @@ __constant__ GPUSharedParameter data_setting_gpu_constant;
 #endif
 
 //A large memory space is pre-defined in order to copy to GPU
-GPUVehicle *vpool_cpu;
-GPUVehicle *vpool_gpu;
+GPUVehicle* vpool_cpu;
+GPUVehicle* vpool_gpu;
 
 //int *vpool_cpu_index;
 //int *vpool_gpu_index;
@@ -117,15 +140,18 @@ long to_output_simulation_result_time;
 bool InitParams(int argc, char* argv[]);
 bool LoadInNetwork();
 bool LoadInDemand();
+bool LoadInTravelTime();
 bool InitilizeCPU();
 bool InitilizeGPU();
 bool InitGPUParameterSetting(GPUSharedParameter* data_setting_gpu);
-bool InitGPUData(GPUMemory* data_local);
+bool InitGPUData(GPUMemory* data_local, NewVehiclesPerInterval** new_interval_vehicles);
 bool StartSimulation();
+bool StartDemandSimulation();
 bool StartSimulationOptimizeWarp();
 bool StartSimulationVP();
 bool StartSimulationSynch();
 bool DestroyResources();
+int findODID(int orig, int dest);
 
 /*
  * Define Helper Functions
@@ -162,6 +188,11 @@ int main(int argc, char* argv[]) {
 		cout << "Loading demand fails" << endl;
 		return 0;
 	}
+
+	if (LoadInTravelTime() == false) {
+		cout << "Loading Travel Time fails" << endl;
+		return 0;
+	}
 	cout<<"Finished loading input files"<<endl;
 	if (InitilizeCPU() == false) {
 		cout << "InitilizeCPU fails" << endl;
@@ -186,7 +217,7 @@ int main(int argc, char* argv[]) {
 	//profile.start_profiling();
 
 	//Start Simulation (ETSF implemented inside)
-	if (StartSimulationOptimizeWarp() == false) {
+	if (StartDemandSimulation() == false) {
 		cout << "Simulation Fails" << endl;
 		DestroyResources();
 		return 0;
@@ -216,6 +247,17 @@ bool InitParams(int argc, char* argv[]) {
 		std::cout << "network_file_path: "<<network_file_path<< std::endl;
 		std::cout << "demand_file_path: "<<demand_file_path<< std::endl;
 		std::cout << "od_pair_paths_file_path: "<<od_pair_paths_file_path<< std::endl;
+	} else if (argc == 6){
+		network_file_path = argv[1];
+		demand_file_path = argv[2];
+		od_pair_paths_file_path = argv[3];
+		path_link_file_path = argv[4];
+		tt_file_path = argv[5];
+		std::cout << "network_file_path: "<<network_file_path<< std::endl;
+		std::cout << "demand_file_path: "<<demand_file_path<< std::endl;
+		std::cout << "od_pair_paths_file_path: "<<od_pair_paths_file_path<< std::endl;
+		std::cout << "path_link_file_path: "<<path_link_file_path<< std::endl;
+		std::cout << "tt_file_path: "<<tt_file_path<< std::endl;
 	}
 	return true;
 }
@@ -225,16 +267,17 @@ bool LoadInNetwork() {
 }
 
 bool LoadInDemand() {
-	//if (ODPair::load_in_all_ODs(all_od_pairs, od_pair_file_path) == false) {
-	//	return false;
-	//}
-	if (ODPairPATH::load_in_all_OD_Paths(all_od_paths, od_pair_paths_file_path) == false) {
+	if (Path::load_in_all_Paths(all_paths, all_od_pairs, od_path_map, od_pair_paths_file_path, path_link_file_path) == false) {
 		return false;
 	}
 	if (Vehicle::load_in_all_vehicles(all_vehicles, demand_file_path) == false) {
 		return false;
 	}
 	return true;
+}
+
+bool LoadInTravelTime() {
+	return LinkTravelTimes::load_in_all_link_tt(the_tt_table, tt_file_path);
 }
 
 bool InitilizeCPU() {
@@ -264,7 +307,8 @@ bool InitilizeGPU() {
 	parameter_setting_on_gpu = NULL;
 
 	data_local = new GPUMemory();
-	InitGPUData(data_local);
+
+	InitGPUData(data_local, new_interval_vehicles);
 
 	GPUSharedParameter* data_setting_gpu = new GPUSharedParameter();
 	InitGPUParameterSetting(data_setting_gpu);
@@ -290,6 +334,7 @@ bool InitilizeGPU() {
 	if (cudaMalloc((void**) &parameter_setting_on_gpu, sizeof(GPUSharedParameter)) != cudaSuccess) {
 		cerr << "cudaMalloc(&GPUSharedParameter, sizeof(GPUSharedParameter)) failed" << endl;
 	}
+
 #ifdef ENABLE_CONSTANT_MEMORY
 	cudaMemcpyToSymbol(data_setting_gpu_constant, &data_setting_cpu_constant, sizeof(GPUSharedParameter));
 #endif
@@ -302,7 +347,6 @@ bool InitilizeGPU() {
 		}
 	}
 	cudaMemcpy(vpool_gpu, vpool_cpu, memory_space_for_vehicles, cudaMemcpyHostToDevice);
-//	cudaMemcpy(vpool_gpu_index, vpool_cpu_index, memory_space_for_rebuild_index, cudaMemcpyHostToDevice);
 	cudaMemcpy(gpu_data, data_local, data_local->total_size(), cudaMemcpyHostToDevice);
 	cudaMemcpy(parameter_setting_on_gpu, data_setting_gpu, sizeof(GPUSharedParameter), cudaMemcpyHostToDevice);
 
@@ -343,13 +387,22 @@ bool InitGPUParameterSetting(GPUSharedParameter* data_setting_gpu) {
 
 	data_setting_gpu->kOnGPUTotalVehicleSpace = kTotalVehicleSpace;
 
+	data_setting_gpu->kOnGPUTTInterval = kTTInterval;
+	data_setting_gpu->kOnGPUNumTTInfo = kNumTTInfo;
+	data_setting_gpu->kOnGPUNumPaths = kNumPaths;
+
+	data_setting_gpu->kOnGPUMaxUtil = log(3.40282347e+38);
+	data_setting_gpu->kOnGPUMaxFloat = 3.40282347e+38;
+
+	data_setting_gpu->betaT = -0.0108879;
+
 	return true;
 }
 
 /*
  * Build a GPU data from the network data
  */
-bool InitGPUData(GPUMemory* data_local) {
+bool InitGPUData(GPUMemory* data_local, NewVehiclesPerInterval** new_interval_vehicles) {
 	data_local->num_processed_blocks = 0;
 	/**
 	 * First Part: Lane
@@ -467,8 +520,51 @@ bool InitGPUData(GPUMemory* data_local) {
 		}
 	}
 	std::cout << "Node Pool Size: "<<sizeof(data_local->node_pool)<<std::endl;
+
+	/*
+	 * OD-Path Mapping
+	 */
+	int start_index = 0;
+	for(int i=0; i<kNumOD; i++){
+		ODPathMapping* one_mapping = od_path_map[i];
+		data_local->od_path_mapping.od_id[i] = one_mapping->od_id;
+		data_local->od_path_mapping.path_start_index[i] = start_index;
+		data_local->od_path_mapping.num_paths[i] = one_mapping->path_ids.size();
+		//std::cout<<"od:"<<all_od_pairs[i]->orig<<"-"<<all_od_pairs[i]->dest<<" start index:"<<start_index<<" num paths:"<<one_mapping->path_ids.size()<<"\n";
+		start_index += one_mapping->path_ids.size();
+	}
+	std::cout << "od_path_mapping size: "<<sizeof(data_local->od_path_mapping)<<std::endl;
+	/*
+	 * path-link-seg mapping
+	 */
+	for(int i=0; i<kNumPaths; i++){
+		Path* aPath = all_paths[i];
+		data_local->path_links_segs[i].path_id = aPath->path_id;
+		data_local->path_links_segs[i].num_links = aPath->link_ids.size();
+		for(int j=0; j<data_local->path_links_segs[i].num_links; j++){
+			data_local->path_links_segs[i].path_links[j] = aPath->link_ids[j];
+		}
+		data_local->path_links_segs[i].num_segs = aPath->seg_ids.size();
+		for(int j=0; j<data_local->path_links_segs[i].num_segs; j++){
+			data_local->path_links_segs[i].path_segs[j] = aPath->seg_ids[j];
+		}
+	}
+	std::cout << "path table size: "<<sizeof(data_local->path_links_segs)<<std::endl;
+
+	/*
+	 * link travel times
+	 */
+	for(int i=0; i<kLinkSize; i++){
+		LinkTravelTimes* oneLink = the_tt_table[i];
+		if(oneLink){
+			for(int j=0; j<=kNumTTInfo; j++){
+				data_local->link_tt[i].travelTimes[j] = oneLink->travelTimes[j];
+			}
+		}
+	}
+	std::cout << "Travel Time table size: "<<sizeof(data_local->link_tt)<<std::endl;
 	/**
-	 * Third Part:
+	 * Vehicles
 	 */
 
 //Init VehiclePool
@@ -493,6 +589,10 @@ bool InitGPUData(GPUMemory* data_local) {
 			}
 		}
 	}
+//init new vehicles per interval
+	for(int i = 0; i<kTotalTimeSteps/kTTInterval; i++){
+		new_interval_vehicles[i] = new NewVehiclesPerInterval();
+	}
 
 //	int nVehiclePerTick = kLaneInputCapacityPerTimeStep * kLaneSize;
 //	std::cout << "init all_vehicles" << std::endl;
@@ -511,43 +611,64 @@ bool InitGPUData(GPUMemory* data_local) {
 		if (time_index_convert >= kTotalTimeSteps || time_index_convert<0)
 			continue;
 
-		int seg_ID = all_od_paths[one_vehicle->path_id]->seg_ids[0];
-		int seg_Index = seg_ID; //the same for the SG Expressway case
+		//int seg_ID = all_paths[one_vehicle->path_id]->seg_ids[0];
+		//int seg_Index = seg_ID; //the same for the SG Expressway case
 
-		if (data_local->new_vehicles_every_time_step[time_index_convert].new_vehicle_size[seg_Index] < data_local->seg_pool.capacity[seg_Index]) {
-			int last_vehicle_index = data_local->new_vehicles_every_time_step[time_index_convert].new_vehicle_size[seg_Index];
+		//if (data_local->new_vehicles_every_time_step[time_index_convert].new_vehicle_size[seg_Index] < data_local->seg_pool.capacity[seg_Index]) {
+			//int last_vehicle_index = data_local->new_vehicles_every_time_step[time_index_convert].new_vehicle_size[seg_Index];
 
 			vpool_cpu[total_inserted_vehicles].vehicle_ID = one_vehicle->vehicle_id;
 			vpool_cpu[total_inserted_vehicles].entry_time = time_index_convert;
+			vpool_cpu[total_inserted_vehicles].od_id = findODID(one_vehicle->orig, one_vehicle->dest);
 			//vpool_cpu[i].current_seg_ID = seg_Index;
 
 			//assert(kMaxRouteLength > all_od_paths[one_vehicle->path_id]->seg_ids.size());
-			int max_copy_length = kMaxRouteLength > all_od_paths[one_vehicle->path_id]->seg_ids.size() ? all_od_paths[one_vehicle->path_id]->seg_ids.size() : kMaxRouteLength;
-
-			for (int p = 0; p < max_copy_length; p++) {
-				vpool_cpu[total_inserted_vehicles].path_code[p] = all_od_paths[one_vehicle->path_id]->seg_ids[p];
-			}
-
-			//ready for the next lane, so next_path_index is set to 1, if the next_path_index == whole_path_length, it means cannot find path any more, can exit;
-			vpool_cpu[total_inserted_vehicles].next_path_index = 1;
-			vpool_cpu[total_inserted_vehicles].whole_path_length = all_od_paths[one_vehicle->path_id]->seg_ids.size();
+//			int max_copy_length = kMaxRouteLength > all_paths[one_vehicle->path_id]->seg_ids.size() ? all_paths[one_vehicle->path_id]->seg_ids.size() : kMaxRouteLength;
+//
+//			for (int p = 0; p < max_copy_length; p++) {
+//				vpool_cpu[total_inserted_vehicles].path_code[p] = all_paths[one_vehicle->path_id]->seg_ids[p];
+//			}
+//
+//			//ready for the next lane, so next_path_index is set to 1, if the next_path_index == whole_path_length, it means cannot find path any more, can exit;
+//			vpool_cpu[total_inserted_vehicles].next_path_index = 1;
+//			vpool_cpu[total_inserted_vehicles].whole_path_length = all_paths[one_vehicle->path_id]->seg_ids.size();
 
 			//will be re-writen by GPU
-			//insert new vehicle
-			data_local->new_vehicles_every_time_step[time_index_convert].new_vehicles[seg_Index][last_vehicle_index] = total_inserted_vehicles;//vpool_cpu[i].vehicle_ID;
-			data_local->new_vehicles_every_time_step[time_index_convert].new_vehicle_size[seg_Index]++;
+			//insert new vehicle for each lane, each interval
+//			data_local->new_vehicles_every_time_step[time_index_convert].new_vehicles[seg_Index][last_vehicle_index] = total_inserted_vehicles;//vpool_cpu[i].vehicle_ID;
+//			data_local->new_vehicles_every_time_step[time_index_convert].new_vehicle_size[seg_Index]++;
+
+			new_interval_vehicles[time_index_convert/kTTInterval]->veh_ids[new_interval_vehicles[time_index_convert/kTTInterval]->new_vehicle_size] = total_inserted_vehicles;
+			new_interval_vehicles[time_index_convert/kTTInterval]->new_vehicle_size++;
 
 			total_inserted_vehicles++;
-		} else {
+		//} else {
 //			std::cout << "Loading Vehicles Exceeds The Loading Capacity: Time:" << time_index_covert << ", Lane_ID:" << lane_ID << ",i:" << i << ",ID:" << one_vehicle->vehicle_id << std::endl;
-		}
+		//}
 	}
+
+//	int max_n = 0;
+//	for(int i=0; i<kTotalTimeSteps/kTTInterval; i++){
+//		if(max_n < new_interval_vehicles[i]->new_vehicle_size){
+//			max_n = new_interval_vehicles[i]->new_vehicle_size;
+//		}
+//	}
+//	std::cout<<"max_n: "<<max_n<<"\n";
 
 	std::cout << "init all_vehicles:" << total_inserted_vehicles << std::endl;
 	std::cout << "vpool.size():" << total_inserted_vehicles * sizeof(GPUVehicle)<< std::endl;
 	std::cout << "total global mem: "<< data_local->total_size()<<std::endl;
 
 	return true;
+}
+
+int findODID(int orig, int dest){
+	for(int i=0; i<kNumOD; i++){
+		if(orig==all_od_pairs[i]->orig && dest==all_od_pairs[i]->dest){
+			return i;
+		}
+	}
+	return -1;
 }
 
 bool DestroyResources() {
@@ -563,44 +684,103 @@ bool DestroyResources() {
 	return true;
 }
 
-bool StartSimulation() {
+bool StartDemandSimulation() {
+	//=========================================DEMAND======================================================//
+	int numPathsPerTTInterval = kNumPaths*kTTInterval/kUnitTimeStep;
+	thrust::device_ptr<int> current_paths_start_ptr(gpu_data->current_paths);
+
+	while(to_simulate_time < 30){
+		std::cout<<to_simulate_time<<"\n";
+
+		//Create in GPU a list of new vehicles departing this interval
+		int cur_interval_num_vehicles = new_interval_vehicles[to_simulate_time]->new_vehicle_size;
+		std::cout<<cur_interval_num_vehicles<<"\n";
+		cudaMemcpy(gpu_data->cur_interval_new_vehicles, new_interval_vehicles[to_simulate_time]->veh_ids, sizeof(int)*cur_interval_num_vehicles, cudaMemcpyHostToDevice);
+
+		//init current paths array to -1
+		thrust::fill(current_paths_start_ptr, current_paths_start_ptr+numPathsPerTTInterval, -1);
+
+		//Mark paths for path cost computation
+		markPaths<<<ceil(cur_interval_num_vehicles/vehicle_threads_in_a_block), vehicle_threads_in_a_block, 0>>>(gpu_data, vpool_gpu, cur_interval_num_vehicles, to_simulate_time*kTTInterval, parameter_setting_on_gpu);
+
+		//compact current_paths array
+		thrust::device_ptr<int> new_end = thrust::remove(current_paths_start_ptr, current_paths_start_ptr + numPathsPerTTInterval, -1);
+
+//		thrust::host_vector<int> cpu_current_paths(current_paths_start_ptr, new_end);
+//		for(int i=0; i<cpu_current_paths.size(); i++){
+//			std::cout<<cpu_current_paths[i]<<" ";
+//		}
+//		std::cout<<"\n";
+//		std::cout<<new_end-current_paths_start_ptr<<"\n";
+//		std::cout<<cpu_current_paths.size()<<"\n";
+
+		//compute path cost
+		computePathCosts<<<ceil((new_end-current_paths_start_ptr)/path_threads_in_a_block), path_threads_in_a_block, 0>>>(gpu_data, new_end-current_paths_start_ptr, parameter_setting_on_gpu);
+
+		curandState* devStates;
+		cudaMalloc ( &devStates, cur_interval_num_vehicles*sizeof( curandState ) );
+
+		pathSelection<<<ceil(cur_interval_num_vehicles/vehicle_threads_in_a_block), vehicle_threads_in_a_block, 0>>>(gpu_data, vpool_gpu, cur_interval_num_vehicles, to_simulate_time*kTTInterval, parameter_setting_on_gpu, devStates);
+
+		to_simulate_time++;
+	}
 	TimeTools profile;
-	//profile.start_profiling();
+	profile.start_profiling();
 
-	while (to_simulate_time < 1800) {
+	while (to_simulate_time < simulation_end_time/kTTInterval) {
+		//Create in GPU a list of new vehicles departing this interval
+		int cur_interval_num_vehicles = new_interval_vehicles[to_simulate_time]->new_vehicle_size;
+		cudaMemcpy(gpu_data->cur_interval_new_vehicles, new_interval_vehicles[to_simulate_time]->veh_ids, sizeof(int)*cur_interval_num_vehicles, cudaMemcpyHostToDevice);
 
+		//init current paths array to -1
+		thrust::fill(current_paths_start_ptr, current_paths_start_ptr+numPathsPerTTInterval, -1);
+
+		//Mark paths for path cost computation
+		markPaths<<<ceil(cur_interval_num_vehicles/vehicle_threads_in_a_block), vehicle_threads_in_a_block, 0>>>(gpu_data, vpool_gpu, cur_interval_num_vehicles, to_simulate_time*kTTInterval, parameter_setting_on_gpu);
+
+		//compact current_paths array
+		thrust::device_ptr<int> new_end = thrust::remove(current_paths_start_ptr, current_paths_start_ptr + numPathsPerTTInterval, -1);
+
+		//compute path cost
+		computePathCosts<<<ceil((new_end-current_paths_start_ptr)/path_threads_in_a_block), path_threads_in_a_block, 0>>>(gpu_data, new_end-current_paths_start_ptr, parameter_setting_on_gpu);
+
+		curandState* devStates;
+		cudaMalloc ( &devStates, cur_interval_num_vehicles*sizeof( curandState ) );
+
+		pathSelection<<<ceil(cur_interval_num_vehicles/vehicle_threads_in_a_block), vehicle_threads_in_a_block, 0>>>(gpu_data, vpool_gpu, cur_interval_num_vehicles, to_simulate_time*kTTInterval, parameter_setting_on_gpu, devStates);
+
+		to_simulate_time++;
+	}
+	profile.end_profiling();
+	profile.output();
+	return true;
+}
+
+bool StartSimulation() {
+
+	while(to_simulate_time < 1800)
+	{
+		//=========================================SUPPLY==========================================//
 		SupplySimulationPreVehiclePassing<<<segment_blocks, segment_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, kSegmentSize, parameter_setting_on_gpu, vpool_gpu);
-
-		//SupplySimulationVehiclePassingVNode<<<node_blocks, node_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, kNodeSize, parameter_setting_on_gpu, vpool_gpu);
 
 		bool num_processed_nodes = true;
 
 		SupplySimulationVehiclePassingFirst<<<node_blocks, node_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, kNodeSize, parameter_setting_on_gpu, vpool_gpu);
 
 		cudaMemcpy(&num_processed_nodes, &gpu_data->num_processed_blocks, sizeof(bool), cudaMemcpyDeviceToHost);
-		//int n = 1;
+
 		while(num_processed_nodes){
 			num_processed_nodes = false;
 			cudaMemcpy(&gpu_data->num_processed_blocks, &num_processed_nodes, sizeof(bool), cudaMemcpyHostToDevice);
 			SupplySimulationVehiclePassing<<<node_blocks, node_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, kNodeSize, parameter_setting_on_gpu, vpool_gpu);
 			cudaMemcpy(&num_processed_nodes, &gpu_data->num_processed_blocks, sizeof(bool), cudaMemcpyDeviceToHost);
-			//cudaMemcpy(nodes_processed, gpu_data->seg_pool.processed, sizeof(bool)*kSegmentSize, cudaMemcpyDeviceToHost);
-			//					for(int i=0; i<kSegmentSize; i++){
-			//						if(nodes_processed[i]>0){
-			//							std::cout<<"time "<<to_simulate_time<<" iter "<<n<<" node "<<i<<"\n";
-			//						}
-			//					}
-			//std::cout<<"Interval "<<n<<' '<<num_processed_nodes<<'\n';
-			//n++;
 		}
-		//std::cout<<n<<'\n';
 
-		//SupplySimulationAfterVehiclePassing<<<lane_blocks, lane_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, kLaneSize, parameter_setting_on_gpu);
 		to_simulate_time += simulation_time_step;
 	}
-	//profile.end_profiling();
-	//profile.output();
 
+
+	TimeTools profile;
 	profile.start_profiling();
 
 	while (to_simulate_time < simulation_end_time) {
