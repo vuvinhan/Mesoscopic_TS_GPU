@@ -653,13 +653,13 @@ bool InitGPUData(GPUMemory* data_local, NewVehiclesPerInterval** new_interval_ve
 		//}
 	}
 
-//	int max_n = 0;
-//	for(int i=0; i<kTotalTimeSteps/kTTInterval; i++){
-//		if(max_n < new_interval_vehicles[i]->new_vehicle_size){
-//			max_n = new_interval_vehicles[i]->new_vehicle_size;
-//		}
-//	}
-//	std::cout<<"max_n: "<<max_n<<"\n";
+	int max_n = 0;
+	for(int i=0; i<kTotalTimeSteps/kTTInterval; i++){
+		if(max_n < new_interval_vehicles[i]->new_vehicle_size){
+			max_n = new_interval_vehicles[i]->new_vehicle_size;
+		}
+	}
+	std::cout<<"max_n: "<<max_n<<"\n";
 
 	std::cout << "init all_vehicles:" << total_inserted_vehicles << std::endl;
 	std::cout << "vpool.size():" << total_inserted_vehicles * sizeof(GPUVehicle)<< std::endl;
@@ -738,13 +738,22 @@ bool StartDemandSimulation() {
 //			std::cout<<cpu_current_paths[i]<<" ";
 //		}
 //		std::cout<<"\n";
-//		std::cout<<new_end-current_paths_start_ptr<<"\n";
+		std::cout<<new_end-current_paths_start_ptr<<"\n";
 //		std::cout<<cpu_current_paths.size()<<"\n";
 
 		//compute path cost
 		computePathCosts<<<ceil((new_end-current_paths_start_ptr)/path_threads_in_a_block), path_threads_in_a_block, 0>>>(gpu_data, new_end-current_paths_start_ptr, parameter_setting_on_gpu);
 
 		pathSelection<<<ceil(cur_interval_num_vehicles/vehicle_threads_in_a_block), vehicle_threads_in_a_block, 0>>>(gpu_data, vpool_gpu, cur_interval_num_vehicles, to_simulate_time*kTTInterval, parameter_setting_on_gpu, devStates);
+
+		cudaMemcpy(data_local->new_vehicles_every_time_step, gpu_data->new_vehicles_every_time_step, sizeof(NewLaneVehicles)*kTotalTimeSteps, cudaMemcpyDeviceToHost);
+		for(int i=to_simulate_time; i<to_simulate_time+60; i++){
+			for(int j=0; j<data_local->cur_interval_new_vehicles[to_simulate_time].new_vehicle_size; j++){
+				int veh_pool_id = data_local->cur_interval_new_vehicles[to_simulate_time].veh_ids[j];
+				int od_id = vpool_cpu[veh_pool_id].od_id;
+				std::cout<<all_od_pairs[od_id]->orig<<" "<<all_od_pairs[od_id]->dest<<" "<<vpool_gpu[veh_pool_id].path_code<<"\n";
+			}
+		}
 
 		to_simulate_time++;
 	}
