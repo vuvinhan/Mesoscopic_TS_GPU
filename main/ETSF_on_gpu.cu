@@ -310,6 +310,9 @@ bool InitilizeGPU() {
 
 	InitGPUData(data_local, new_interval_vehicles);
 
+	TimeTools profile;
+	profile.start_profiling();
+
 	GPUSharedParameter* data_setting_gpu = new GPUSharedParameter();
 	InitGPUParameterSetting(data_setting_gpu);
 
@@ -349,6 +352,9 @@ bool InitilizeGPU() {
 	cudaMemcpy(vpool_gpu, vpool_cpu, memory_space_for_vehicles, cudaMemcpyHostToDevice);
 	cudaMemcpy(gpu_data, data_local, data_local->total_size(), cudaMemcpyHostToDevice);
 	cudaMemcpy(parameter_setting_on_gpu, data_setting_gpu, sizeof(GPUSharedParameter), cudaMemcpyHostToDevice);
+
+	profile.end_profiling();
+	profile.output();
 
 //	int GRID_SIZE = 1;
 //	int BLOCK_SIZE = kTotalTimeSteps;
@@ -685,11 +691,25 @@ bool DestroyResources() {
 }
 
 bool StartDemandSimulation() {
+	TimeTools profile;
 	//=========================================DEMAND======================================================//
 	int numPathsPerTTInterval = kNumPaths*kTTInterval/kUnitTimeStep;
 	thrust::device_ptr<int> current_paths_start_ptr(gpu_data->current_paths);
 	curandState* devStates;
 	cudaMalloc ( &devStates, kMaxNumVehPerInterval*sizeof( curandState ) );
+
+	//prepare demand
+	for(int i=0; i<kTotalTimeSteps/kTTInterval; i++){
+		data_local->cur_interval_new_vehicles[i].new_vehicle_size = new_interval_vehicles[i]->new_vehicle_size;
+		for(int j=0; j<new_interval_vehicles[i]->new_vehicle_size; j++){
+			data_local->cur_interval_new_vehicles[i].veh_ids[j] = new_interval_vehicles[i]->veh_ids[j];
+		}
+	}
+	std::cout<<sizeof(GPUNewVehiclesPerInterval)<<"\n";
+	profile.start_profiling();
+	cudaMemcpy(gpu_data->cur_interval_new_vehicles, data_local->cur_interval_new_vehicles, sizeof(GPUNewVehiclesPerInterval)*kTotalTimeSteps/kTTInterval, cudaMemcpyHostToDevice);
+	profile.end_profiling();
+	profile.output();
 
 	while(to_simulate_time < 30){
 		std::cout<<to_simulate_time<<"\n";
@@ -697,7 +717,7 @@ bool StartDemandSimulation() {
 		//Create in GPU a list of new vehicles departing this interval
 		int cur_interval_num_vehicles = new_interval_vehicles[to_simulate_time]->new_vehicle_size;
 		std::cout<<cur_interval_num_vehicles<<"\n";
-		cudaMemcpy(gpu_data->cur_interval_new_vehicles, new_interval_vehicles[to_simulate_time]->veh_ids, sizeof(int)*cur_interval_num_vehicles, cudaMemcpyHostToDevice);
+		//cudaMemcpy(gpu_data->cur_interval_new_vehicles, new_interval_vehicles[to_simulate_time]->veh_ids, sizeof(int)*cur_interval_num_vehicles, cudaMemcpyHostToDevice);
 
 		//init current paths array to -1
 		thrust::fill(current_paths_start_ptr, current_paths_start_ptr+numPathsPerTTInterval, -1);
@@ -728,14 +748,14 @@ bool StartDemandSimulation() {
 
 		to_simulate_time++;
 	}
-	TimeTools profile;
+
 	profile.start_profiling();
 
 	while (to_simulate_time < simulation_end_time/kTTInterval) {
 		//Create in GPU a list of new vehicles departing this interval
 		int cur_interval_num_vehicles = new_interval_vehicles[to_simulate_time]->new_vehicle_size;
 
-		cudaMemcpy(gpu_data->cur_interval_new_vehicles, new_interval_vehicles[to_simulate_time]->veh_ids, sizeof(int)*cur_interval_num_vehicles, cudaMemcpyHostToDevice);
+		//cudaMemcpy(gpu_data->cur_interval_new_vehicles, new_interval_vehicles[to_simulate_time]->veh_ids, sizeof(int)*cur_interval_num_vehicles, cudaMemcpyHostToDevice);
 
 
 		//init current paths array to -1

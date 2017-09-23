@@ -38,10 +38,10 @@ __global__ void markPathsFirst(GPUMemory* gpu_data, GPUVehicle *vpool_gpu, int n
  	if (veh_index >= num_vehicles)
  		return;
 
- 	int od_id = vpool_gpu[gpu_data->cur_interval_new_vehicles[veh_index]].od_id;
+ 	int od_id = vpool_gpu[gpu_data->cur_interval_new_vehicles[start_time/data_setting_gpu->kOnGPUTTInterval].veh_ids[veh_index]].od_id;
  	int path_start_index = gpu_data->od_path_mapping.path_start_index[od_id];
  	int path_end_index = path_start_index + gpu_data->od_path_mapping.num_paths[od_id]-1;
- 	int entry_time = vpool_gpu[gpu_data->cur_interval_new_vehicles[veh_index]].entry_time;
+ 	int entry_time = vpool_gpu[gpu_data->cur_interval_new_vehicles[start_time/data_setting_gpu->kOnGPUTTInterval].veh_ids[veh_index]].entry_time;
  	int time_step = entry_time - start_time;
  	for(int pathId=path_start_index; pathId<=path_end_index; pathId++){
  		gpu_data->current_paths[time_step*data_setting_gpu->kOnGPUNumPaths+pathId] = pathId;
@@ -57,10 +57,10 @@ __global__ void markPaths(GPUMemory* gpu_data, GPUVehicle *vpool_gpu, int num_ve
  	if (veh_index >= num_vehicles)
  		return;
 
- 	int od_id = vpool_gpu[gpu_data->cur_interval_new_vehicles[veh_index]].od_id;
+ 	int od_id = vpool_gpu[gpu_data->cur_interval_new_vehicles[start_time/data_setting_gpu->kOnGPUTTInterval].veh_ids[veh_index]].od_id;
  	int path_start_index = gpu_data->od_path_mapping.path_start_index[od_id];
  	int path_end_index = path_start_index + gpu_data->od_path_mapping.num_paths[od_id]-1;
- 	int entry_time = vpool_gpu[gpu_data->cur_interval_new_vehicles[veh_index]].entry_time;
+ 	int entry_time = vpool_gpu[gpu_data->cur_interval_new_vehicles[start_time/data_setting_gpu->kOnGPUTTInterval].veh_ids[veh_index]].entry_time;
  	int time_step = entry_time - start_time;
  	for(int pathId=path_start_index; pathId<=path_end_index; pathId++){
  		gpu_data->current_paths[time_step*data_setting_gpu->kOnGPUNumPaths+pathId] = pathId;
@@ -99,7 +99,7 @@ __global__ void pathSelection(GPUMemory* gpu_data, GPUVehicle *vpool_gpu, int nu
 	if (veh_index >= num_vehicles)
 		return;
 
-	int veh_pool_id = gpu_data->cur_interval_new_vehicles[veh_index];
+	int veh_pool_id = gpu_data->cur_interval_new_vehicles[start_time/data_setting_gpu->kOnGPUTTInterval].veh_ids[veh_index];
 	int od_id = vpool_gpu[veh_pool_id].od_id;
 
 	int entry_time = vpool_gpu[veh_pool_id].entry_time;

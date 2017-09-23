@@ -19,6 +19,7 @@
 #include "on_GPU_od_path.h"
 #include "on_GPU_link_tt.h"
 #include "on_GPU_path_link_seg.h"
+#include "on_GPU_new_vehicles_per_interval.h"
 
 class GPUMemory {
 public:
@@ -33,7 +34,7 @@ public:
 	bool num_processed_blocks;
 
 	NewLaneVehicles new_vehicles_every_time_step[kTotalTimeSteps];
-	int cur_interval_new_vehicles[kMaxNumVehPerInterval];
+	GPUNewVehiclesPerInterval cur_interval_new_vehicles[kTotalTimeSteps/kTTInterval];
 
 	int current_paths[kNumPaths*kTTInterval/kUnitTimeStep];
 	float current_paths_time[kNumPaths*kTTInterval/kUnitTimeStep];
@@ -47,7 +48,7 @@ public:
 
 	size_t total_size() {
 		return sizeof(LanePool) + sizeof(NodePool) + sizeof(SegmentPool) + sizeof(LaneVehiclePool) + sizeof(NewLaneVehicles) * kTotalTimeSteps + sizeof(int)*(kNodeSize+1) + sizeof(bool)
-				+ sizeof(int)*kSegmentSize*kMaxSegmentInputCapacityPerTimeStep + sizeof(int)*kNumPaths*kTTInterval/kUnitTimeStep + sizeof(float)*kNumPaths*kTTInterval/kUnitTimeStep
+				+ sizeof(GPUNewVehiclesPerInterval)*kTotalTimeSteps/kTTInterval + sizeof(int)*kNumPaths*kTTInterval/kUnitTimeStep + sizeof(float)*kNumPaths*kTTInterval/kUnitTimeStep
 				+ sizeof(GPUODPath) + sizeof(GPUPathLinkSeg)*kNumPaths
 				+ sizeof(GPULinkTravelTimes)*kLinkSize;
 	}
