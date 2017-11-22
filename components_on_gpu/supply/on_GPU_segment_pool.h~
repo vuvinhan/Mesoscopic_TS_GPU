@@ -44,7 +44,7 @@ public:
 	//float his_queue_length_weighting[kQueueLengthHistory][kSegmentSize];
 
 	//float predicted_queue_length[kSegmentSize];
-	int predicted_empty_space[kSegmentSize];
+	float predicted_empty_space[kSegmentSize];
 
 	//For empty space update
 	//int leaving_vehicle_counts[kSegmentSize];
