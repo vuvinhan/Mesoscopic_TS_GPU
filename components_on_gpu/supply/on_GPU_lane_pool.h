@@ -50,12 +50,13 @@ public:
 	//float speed_history[kTotalTimeSteps][kLaneSize];
 
 	//For queue length prediction
-	//float last_time_empty_space[kLaneSize];
+	float last_time_empty_space[kLaneSize];
 	//float his_queue_length[kQueueLengthHistory][kLaneSize];
 	//float his_queue_length_weighting[kQueueLengthHistory][kLaneSize];
 
 	//float predicted_queue_length[kLaneSize];
 	//float predicted_empty_space[kLaneSize];
+	float empty_space[kLaneSize];
 
 	//For empty space update
 	//int new_vehicle_join_counts[kLaneSize];

@@ -557,7 +557,7 @@ bool StartSimulation() {
 	TimeTools profile;
 	//profile.start_profiling();
 
-	while (to_simulate_time < 1800) {
+	while (to_simulate_time < 3600) {
 
 		SupplySimulationPreVehiclePassing<<<segment_blocks, segment_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, kSegmentSize, parameter_setting_on_gpu, vpool_gpu);
 
@@ -591,7 +591,7 @@ bool StartSimulation() {
 	//profile.end_profiling();
 	//profile.output();
 
-	profile.start_profiling();
+	/*profile.start_profiling();
 
 	while (to_simulate_time < simulation_end_time) {
 
@@ -604,7 +604,7 @@ bool StartSimulation() {
 		SupplySimulationVehiclePassingFirst<<<node_blocks, node_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, kNodeSize, parameter_setting_on_gpu, vpool_gpu);
 
 		cudaMemcpy(&num_processed_nodes, &gpu_data->num_processed_blocks, sizeof(bool), cudaMemcpyDeviceToHost);
-		int n = 1;
+		//int n = 1;
 		while(num_processed_nodes){
 			num_processed_nodes = false;
 			cudaMemcpy(&gpu_data->num_processed_blocks, &num_processed_nodes, sizeof(bool), cudaMemcpyHostToDevice);
@@ -617,15 +617,15 @@ bool StartSimulation() {
 //						}
 //					}
 			//std::cout<<"Interval "<<n<<' '<<num_processed_nodes<<'\n';
-			n++;
+			//n++;
 		}
-		std::cout<<to_simulate_time<<'\t'<<n<<'\n';
+		//std::cout<<n<<'\n';
 
 		//SupplySimulationAfterVehiclePassing<<<lane_blocks, lane_threads_in_a_block, 0, stream_gpu_supply>>>(gpu_data, to_simulate_time, kLaneSize, parameter_setting_on_gpu);
 		to_simulate_time += simulation_time_step;
 	}
 	profile.end_profiling();
-	profile.output();
+	profile.output();*/
 	return true;
 }
 

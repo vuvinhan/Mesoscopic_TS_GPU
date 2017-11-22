@@ -43,27 +43,14 @@ __global__ void SupplySimulationPreVehiclePassing(GPUMemory* gpu_data, int time_
  		return;
 
  	int seg_veh_cnt = 0;
-	gpu_data->seg_pool.input_capacity[seg_index] = gpu_data->seg_pool.capacity[seg_index];
-	float seg_length = gpu_data->seg_pool.seg_length[seg_index];
 
  	//update segment vehicle counts and input capacity after advance phase
  	if(time_step >0){
  		for(int lane_index = gpu_data->seg_pool.lane_start_index[seg_index]; lane_index<=gpu_data->seg_pool.lane_end_index[seg_index]; ++lane_index){
- 			//update lane empty space
- 			gpu_data->lane_pool.empty_space[lane_index] = gpu_data->lane_pool.last_time_empty_space[lane_index] + gpu_data->seg_pool.speed[seg_index] * data_setting_gpu->kOnGPUUnitTimeStep;
- 			gpu_data->lane_pool.empty_space[lane_index] = MinOnDevice(seg_length - gpu_data->lane_pool.queue_length[lane_index], gpu_data->lane_pool.empty_space[lane_index]);
-
  			gpu_data->lane_pool.vehicle_counts[lane_index] = gpu_data->lane_pool.vehicle_counts[lane_index] - gpu_data->lane_pool.leaving_vehicle_counts[lane_index];
  			if(gpu_data->lane_pool.buffered_vehicle_counts[lane_index]>0){
  				//vehicles which can pass
- 				int can_pass_veh = MinOnDevice(gpu_data->lane_pool.buffered_vehicle_counts[lane_index], (int)(gpu_data->lane_pool.empty_space[lane_index]/data_setting_gpu->kOnGPUVehicleLength));
-
- 				if(can_pass_veh > 0){
- 					gpu_data->lane_pool.empty_space[lane_index] = MinOnDevice(gpu_data->seg_pool.speed[seg_index] * data_setting_gpu->kOnGPUUnitTimeStep, gpu_data->lane_pool.empty_space[lane_index]) - can_pass_veh * data_setting_gpu->kOnGPUVehicleLength;
-
- 					if (gpu_data->lane_pool.empty_space[lane_index] < 0)
- 						gpu_data->lane_pool.empty_space[lane_index] = 0;
- 				}
+ 				int can_pass_veh = MinOnDevice(gpu_data->lane_pool.buffered_vehicle_counts[lane_index], (gpu_data->lane_pool.max_vehicles[lane_index]-gpu_data->lane_pool.vehicle_counts[lane_index]));
 
  				//move vehicles from virtual lane to lane
  				for(int i=0; i<can_pass_veh; i++){
@@ -87,6 +74,8 @@ __global__ void SupplySimulationPreVehiclePassing(GPUMemory* gpu_data, int time_
  			gpu_data->seg_pool.input_capacity[seg_index] -= gpu_data->lane_pool.buffered_vehicle_counts[lane_index];
  		}
  	}
+ 	float seg_length = gpu_data->seg_pool.seg_length[seg_index];
+ 	//gpu_data->seg_pool.input_capacity[seg_index] = gpu_data->seg_pool.capacity[seg_index];
 
  	//load newly generated vehicles to the back of the segment
  	int max_veh = gpu_data->seg_pool.max_vehicles[seg_index];
@@ -98,10 +87,10 @@ __global__ void SupplySimulationPreVehiclePassing(GPUMemory* gpu_data, int time_
  		//choose lane with shortest queue
  		//each segment has at least 1 lane
  		int lane_index = gpu_data->seg_pool.lane_end_index[seg_index];
- 		int que = gpu_data->seg_pool.seg_length[seg_index]+1;
- 		for(int j=gpu_data->seg_pool.lane_end_index[seg_index]; j>=gpu_data->seg_pool.lane_start_index[seg_index]; --j){
+ 		int que = gpu_data->lane_pool.queue_length[lane_index];
+ 		for(int j=gpu_data->seg_pool.lane_end_index[seg_index]-1; j>=gpu_data->seg_pool.lane_start_index[seg_index]; --j){
  			int tmp = gpu_data->lane_pool.queue_length[j];
- 			if(tmp < que && gpu_data->lane_pool.vehicle_counts[j] < gpu_data->lane_pool.max_vehicles[j]){
+ 			if(tmp < que){
  				que = tmp;
  				lane_index = j;
  			}
@@ -119,7 +108,7 @@ __global__ void SupplySimulationPreVehiclePassing(GPUMemory* gpu_data, int time_
  	float density_ = 0.0f;
  	float speed_ = 0.0f;
 
- 	density_ = (seg_veh_cnt) / (seg_length * gpu_data->seg_pool.num_lanes[seg_index]);
+ 	density_ = (1.0 * data_setting_gpu->kOnGPUVehicleLength * seg_veh_cnt) / (seg_length * gpu_data->seg_pool.num_lanes[seg_index]);
 
  	if (density_ <= gpu_data->seg_pool.min_density[seg_index])
  		speed_ = gpu_data->seg_pool.MAX_speed[seg_index];
@@ -140,16 +129,10 @@ __global__ void SupplySimulationPreVehiclePassing(GPUMemory* gpu_data, int time_
  	gpu_data->seg_pool.speed[seg_index] = speed_;
 
  	//calculate empty space
- 	gpu_data->seg_pool.empty_space[seg_index] = 0;
+ 	gpu_data->seg_pool.empty_space[seg_index] = (int)(seg_length/data_setting_gpu->kOnGPUVehicleLength)*gpu_data->seg_pool.num_lanes[seg_index] - seg_veh_cnt;
 
  	//update ETSF parameters for each lane in the segment
  	for(int lane_index = gpu_data->seg_pool.lane_start_index[seg_index]; lane_index<=gpu_data->seg_pool.lane_end_index[seg_index]; ++lane_index){
- 		if(time_step == 0){
- 			gpu_data->lane_pool.empty_space[lane_index] = seg_length;
- 		}
- 		gpu_data->lane_pool.last_time_empty_space[lane_index] = gpu_data->lane_pool.empty_space[lane_index] + gpu_data->seg_pool.speed[seg_index] * data_setting_gpu->kOnGPUUnitTimeStep;
- 		gpu_data->seg_pool.empty_space[seg_index] += (int)(gpu_data->lane_pool.empty_space[lane_index]/data_setting_gpu->kOnGPUVehicleLength);
-
  		float acc_offset = gpu_data->lane_pool.accumulated_offset[lane_index]+gpu_data->seg_pool.speed[seg_index] * data_setting_gpu->kOnGPUUnitTimeStep; //meter
  		int curr_tp=gpu_data->lane_pool.Tp[lane_index];
 
@@ -253,10 +236,9 @@ __device__ void updateAfterVehicleFinishingTrip(GPUMemory* gpu_data, GPUSharedPa
 		gpu_data->lane_vehicle_pool.vehicle_space[start_vehicle_pool_index + j - 1] = gpu_data->lane_vehicle_pool.vehicle_space[start_vehicle_pool_index + j];
 	}
 	gpu_data->seg_pool.output_capacity[seg_id] --;
-	//atomicAdd(&gpu_data->seg_pool.empty_space[seg_id],1);
+	atomicAdd(&gpu_data->seg_pool.empty_space[seg_id],1);
 	gpu_data->seg_pool.flow[seg_id]++;
 	gpu_data->lane_pool.queue_length[lane_id] -= data_setting_gpu->kOnGPUVehicleLength;
-	gpu_data->lane_pool.empty_space[lane_id] = MinOnDevice(gpu_data->seg_pool.seg_length[seg_id] - gpu_data->lane_pool.queue_length[lane_id], gpu_data->lane_pool.last_time_empty_space[lane_id]);
 	gpu_data->lane_pool.timediff[lane_id] = -1; //reset
 }
 
@@ -279,10 +261,10 @@ __device__ void updateAfterVehicleMovingToBuffer(GPUMemory* gpu_data, GPUVehicle
 	//choose lane with shortest queue
 	//each segment has at least 1 lane
 	int next_lane = gpu_data->seg_pool.lane_end_index[next_seg_id];
-	int que = gpu_data->seg_pool.seg_length[next_seg_id]+1;
-	for(int i=gpu_data->seg_pool.lane_end_index[next_seg_id]; i>=gpu_data->seg_pool.lane_start_index[next_seg_id]; --i){
+	int que = gpu_data->lane_pool.queue_length[next_lane];
+	for(int i=gpu_data->seg_pool.lane_end_index[next_seg_id]-1; i>=gpu_data->seg_pool.lane_start_index[next_seg_id]; --i){
 		int tmp = gpu_data->lane_pool.queue_length[i];
-		if(tmp < que && gpu_data->lane_pool.empty_space[i] >= data_setting_gpu->kOnGPUVehicleLength){
+		if(tmp < que){
 			que = tmp;
 			next_lane = i;
 		}
@@ -307,10 +289,9 @@ __device__ void updateAfterVehicleMovingToBuffer(GPUMemory* gpu_data, GPUVehicle
 		gpu_data->lane_vehicle_pool.vehicle_space[start_vehicle_pool_index + j - 1] = gpu_data->lane_vehicle_pool.vehicle_space[start_vehicle_pool_index + j];
 	}
 	gpu_data->lane_pool.queue_length[lane_id] -= data_setting_gpu->kOnGPUVehicleLength;
-	gpu_data->lane_pool.empty_space[lane_id] = MinOnDevice(gpu_data->seg_pool.seg_length[seg_id] - gpu_data->lane_pool.queue_length[lane_id], gpu_data->lane_pool.last_time_empty_space[lane_id]);
 
 	gpu_data->seg_pool.output_capacity[seg_id]--;
-	//atomicAdd(&gpu_data->seg_pool.empty_space[seg_id],1);
+	atomicAdd(&gpu_data->seg_pool.empty_space[seg_id],1);
 	gpu_data->seg_pool.flow[seg_id]++;
 
 	gpu_data->lane_pool.timediff[lane_id] = -1; //reset
@@ -365,10 +346,10 @@ __device__ void updateAfterVehicleMovingToNextSeg(GPUMemory* gpu_data, GPUVehicl
 	//choose lane with shortest queue
 	//each segment has at least 1 lane
 	int next_lane = gpu_data->seg_pool.lane_end_index[next_seg_id];
-	int que = gpu_data->seg_pool.seg_length[next_seg_id]+1;
-	for(int i=gpu_data->seg_pool.lane_end_index[next_seg_id]; i>=gpu_data->seg_pool.lane_start_index[next_seg_id]; --i){
+	int que = gpu_data->lane_pool.queue_length[next_lane];
+	for(int i=gpu_data->seg_pool.lane_end_index[next_seg_id]-1; i>=gpu_data->seg_pool.lane_start_index[next_seg_id]; --i){
 		int tmp = gpu_data->lane_pool.queue_length[i];
-		if(tmp < que && gpu_data->lane_pool.empty_space[i] >= data_setting_gpu->kOnGPUVehicleLength){
+		if(tmp < que){
 			que = tmp;
 			next_lane = i;
 		}
@@ -384,7 +365,7 @@ __device__ void updateAfterVehicleMovingToNextSeg(GPUMemory* gpu_data, GPUVehicl
 	//update next lane/segment parameters
 	gpu_data->lane_pool.buffered_vehicle_counts[next_lane]++;
 	gpu_data->seg_pool.input_capacity[next_seg_id]--;
-	//atomicSub(&gpu_data->seg_pool.empty_space[next_seg_id],1);
+	atomicSub(&gpu_data->seg_pool.empty_space[seg_id],1);
 
 	//update current lane/segment parameters
 	gpu_data->lane_pool.leaving_vehicle_counts[lane_id]++;
@@ -394,10 +375,9 @@ __device__ void updateAfterVehicleMovingToNextSeg(GPUMemory* gpu_data, GPUVehicl
 		gpu_data->lane_vehicle_pool.vehicle_space[start_vehicle_pool_index + j - 1] = gpu_data->lane_vehicle_pool.vehicle_space[start_vehicle_pool_index + j];
 	}
 	gpu_data->lane_pool.queue_length[lane_id] -= data_setting_gpu->kOnGPUVehicleLength;
-	gpu_data->lane_pool.empty_space[lane_id] = MinOnDevice(gpu_data->seg_pool.seg_length[seg_id] - gpu_data->lane_pool.queue_length[lane_id], gpu_data->lane_pool.last_time_empty_space[lane_id]);
 
 	gpu_data->seg_pool.output_capacity[seg_id]--;
-	//atomicAdd(&gpu_data->seg_pool.empty_space[seg_id],1);
+	atomicAdd(&gpu_data->seg_pool.empty_space[seg_id],1);
 	gpu_data->seg_pool.flow[seg_id]++;
 
 	gpu_data->lane_pool.timediff[lane_id] = -1; //reset
@@ -481,10 +461,6 @@ __global__ void SupplySimulationVehiclePassingFirst(GPUMemory* gpu_data, int tim
 		}else{
 			//next segment
 			int next_seg = vpool_gpu[the_one_veh].path_code[vpool_gpu[the_one_veh].next_path_index];
-			int next_seg_empty_space = 0;
-			for(int aLane = gpu_data->seg_pool.lane_start_index[next_seg]; aLane <= gpu_data->seg_pool.lane_end_index[next_seg]; aLane++){
-				next_seg_empty_space = next_seg_empty_space + (gpu_data->lane_pool.empty_space[aLane]/data_setting_gpu->kOnGPUVehicleLength) - gpu_data->lane_pool.buffered_vehicle_counts[aLane];
-			}
 
 			if (gpu_data->seg_pool.input_capacity[next_seg]>0) //start if next segment has input capacity
 			{
@@ -492,7 +468,7 @@ __global__ void SupplySimulationVehiclePassingFirst(GPUMemory* gpu_data, int tim
 					updateAfterVehicleMovingToBuffer(gpu_data, vpool_gpu, data_setting_gpu, time_step, the_one_veh, lane_index, seg_index, next_seg);
 				}
 				else if(gpu_data->seg_pool.processed[next_seg]<=0){
-					if(next_seg_empty_space>0){
+					if(gpu_data->seg_pool.empty_space[next_seg]>0){
 						updateAfterVehicleMovingToNextSeg(gpu_data, vpool_gpu, data_setting_gpu, time_step, the_one_veh, lane_index, seg_index, next_seg);
 					}else{
 						gpu_data->lane_pool.blocked[lane_index] = true; //block upstream segment
@@ -500,7 +476,7 @@ __global__ void SupplySimulationVehiclePassingFirst(GPUMemory* gpu_data, int tim
 						gpu_data->lane_pool.timediff[lane_index] = -1; //reset
 					}
 				}
-				else if(next_seg_empty_space>0){
+				else if(atomicDecrease(&gpu_data->seg_pool.empty_space[next_seg])>0){
 					updateAfterVehicleMovingToNextSeg(gpu_data, vpool_gpu, data_setting_gpu, time_step, the_one_veh, lane_index, seg_index, next_seg);
 				}else{
 					gpu_data->node_pool.cur_veh[node_index] = the_one_veh;
@@ -551,10 +527,6 @@ __global__ void SupplySimulationVehiclePassing(GPUMemory* gpu_data, int time_ste
 		}else{
 			//next segment
 			int next_seg = vpool_gpu[the_one_veh].path_code[vpool_gpu[the_one_veh].next_path_index];
-			int next_seg_empty_space = 0;
-			for(int aLane = gpu_data->seg_pool.lane_start_index[next_seg]; aLane <= gpu_data->seg_pool.lane_end_index[next_seg]; aLane++){
-				next_seg_empty_space = next_seg_empty_space + (gpu_data->lane_pool.empty_space[aLane]/data_setting_gpu->kOnGPUVehicleLength) - gpu_data->lane_pool.buffered_vehicle_counts[aLane];
-			}
 
 			if (gpu_data->seg_pool.input_capacity[next_seg]>0) //start if next segment has input capacity
 			{
@@ -562,7 +534,7 @@ __global__ void SupplySimulationVehiclePassing(GPUMemory* gpu_data, int time_ste
 					updateAfterVehicleMovingToBuffer(gpu_data, vpool_gpu, data_setting_gpu, time_step, the_one_veh, lane_index, seg_index, next_seg);
 				}
 				else if(gpu_data->seg_pool.processed[next_seg]<=0){
-					if(next_seg_empty_space>0){
+					if(gpu_data->seg_pool.empty_space[next_seg]>0){
 						updateAfterVehicleMovingToNextSeg(gpu_data, vpool_gpu, data_setting_gpu, time_step, the_one_veh, lane_index, seg_index, next_seg);
 					}else{
 						gpu_data->lane_pool.blocked[lane_index] = true; //block upstream segment
@@ -570,7 +542,7 @@ __global__ void SupplySimulationVehiclePassing(GPUMemory* gpu_data, int time_ste
 						gpu_data->lane_pool.timediff[lane_index] = -1; //reset
 					}
 				}
-				else if(next_seg_empty_space>0){
+				else if(atomicDecrease(&gpu_data->seg_pool.empty_space[next_seg])>0){
 					updateAfterVehicleMovingToNextSeg(gpu_data, vpool_gpu, data_setting_gpu, time_step, the_one_veh, lane_index, seg_index, next_seg);
 				}else{
 					gpu_data->node_pool.cur_veh[node_index] = the_one_veh;
